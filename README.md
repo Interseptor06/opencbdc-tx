@@ -45,11 +45,34 @@ If you would like to join our technical discussions and help workshop proposals,
 
 For more information on how to contribute, please see our [Contribution Guide](docs/contributing.md)!
 
+If you want to dive straight in, take a look at our issue tracker's list of [good first issues](https://github.com/mit-dci/opencbdc-tx/labels/difficulty%2F01-good-first-issue).
+
 # Get the Code
 
 1. [Install Git](https://git-scm.com/book/en/v2/Getting-Started-Installing-Git)
 1. Clone the repository (including submodules)
     - `git clone --recurse-submodules https://github.com/mit-dci/opencbdc-tx`
+
+# Build
+
+Use these directions if you want to build the source on your machine.
+If you just want to run the system, see "Run the Code" below.
+
+1. Install the necessary libraries and resources
+  ```terminal
+  # ./scripts/configure.sh
+  ```
+1. Run the build
+  ```terminal
+  # ./scripts/build.sh
+  ```
+
+## macOS
+Note that if you have not already installed the xcode cli tools you will need to:
+
+```terminal
+# xcode-select --install
+```
 
 # Run the Code
 
@@ -62,40 +85,77 @@ The easiest way to compile the code and run the system locally is using [Docker]
 
 Don't forget to run the docker daemon!
 
+## Build the containers
+
+Building with Docker utilizes multi-stage builds. In order to run an architecture you will need to build each architecture independently if building locally.
+
+**Note:** We have pre-built images available [here](#launch-the-system-with-a-pre-built-image) if you would rather pull the images from GitHub packages over building them locally.
+
+1. Build 2PC architecture:
+    ```terminal
+    $ cd opencbdc-tx                                              # change to the project directory
+    $ sudo -s                                                     # open a root shell (needed for docker)
+    $ docker build --target twophase  -t opencbdc-tx-twophase .   # build the container
+    ```
+1. Build atomizer architecture:
+    ```terminal
+    $ cd opencbdc-tx                                              # change to the project directory
+    $ sudo -s                                                     # open a root shell (needed for docker)
+    $ docker build --target atomizer  -t opencbdc-tx-atomizer .   # build the container
+    ```
+
 ## Launch the System
 
 **Note:** You will need to both run the system and interact with it; you can either use two shells, or you can add the `--detach` flag when launching the system (note that it will then remain running till you stop it, e.g., with `docker stop`).
-Additionally, you can start the atomizer architecture by passing `--file docker-compose-atomizer.yml` instead.
 
 _The commands below will build a new image every time that you run it.
 You can remove the `--build` flag after the image has been built to avoid rebuilding.
 To run the system with our pre-built image proceed to the [next section](#launch-the-system-with-a-pre-built-image) for the commands to run._
 
 1. Run the System
-   ```terminal
-   # docker compose --file docker-compose-2pc.yml up --build
-   ```
-1. Launch a container in which to run wallet commands (use `--network atomizer-network` instead of `--network 2pc-network` if using the atomizer architecture)
-   ```terminal
-   # docker run --network 2pc-network -ti opencbdc-tx /bin/bash
-   ```
+    1. 2PC architecture:
+        ```terminal
+        $ docker compose --file docker-compose-2pc.yml up --build
+        ```
+    1. Atomizer architecture:
+        ```terminal
+        $ docker compose --file docker-compose-atomizer.yml up --build
+        ```
+1. Launch a container in which to run wallet commands
+    1. 2PC architecture:
+        ```terminal
+        $ docker run --network 2pc-network -ti opencbdc-tx-twophase /bin/bash
+        ```
+    1. Atomizer architecture:
+        ```terminal
+        $ docker run --network atomizer-network -ti opencbdc-tx-atomizer /bin/bash
+        ```
 
 ## Launch the System With a Pre-built Image
 
 We publish new docker images for all commits to `trunk`.
 You can find the images [in the Github Container Registry](https://github.com/mit-dci/opencbdc-tx/pkgs/container/opencbdc-tx).
 
-**Note:** You must use `docker compose` (not `docker-compose`) for this approach to work or you will need to pull the image manually `docker pull ghcr.io/mit-dci/opencbdc-tx`.
-Additionally, you can start the atomizer architecture by passing `--file docker-compose-atomizer.yml --file docker-compose-prebuilt-atomizer.yml` instead.
+**Note:** You must use `docker compose` (not `docker-compose`) for this approach to work or you will need to pull the image manually `docker pull ghcr.io/mit-dci/opencbdc-tx-twophase` or `docker pull ghcr.io/mit-dci/opencbdc-tx-atomizer`.
 
 1. Run the system
-    ```terminal
-    # docker compose --file docker-compose-2pc.yml --file docker-compose-prebuilt-2pc.yml up --no-build
-    ```
-1. Launch a container in which to run wallet commands (use `--network atomizer-network` instead of `--network 2pc-network` if using the atomizer architecture)
-   ```terminal
-   # docker run --network 2pc-network -ti ghcr.io/mit-dci/opencbdc-tx /bin/bash
-   ```
+    1. 2PC architecture:
+        ```terminal
+        $ docker compose --file docker-compose-2pc.yml --file docker-compose-prebuilt-2pc.yml up --no-build
+        ```
+    1. Atomizer architecture:
+        ```terminal
+        $ docker compose --file docker-compose-atomizer.yml --file docker-compose-prebuilt-atomizer.yml up --no-build
+        ```
+1. Launch a container in which to run wallet commands
+    1. 2PC architecture:
+        ```terminal
+        $ docker run --network 2pc-network -ti ghcr.io/mit-dci/opencbdc-tx-twophase /bin/bash
+        ```
+    1. Atomizer architecture:
+        ```terminal
+        $ docker run --network atomizer-network -ti ghcr.io/mit-dci/opencbdc-tx-atomizer /bin/bash
+        ```
 
 ## Setup test wallets and test them
 
@@ -129,7 +189,7 @@ In each of the below commands, you should pass `atomizer-compose.cfg` instead of
   usd1qrw038lx5n4wxx3yvuwdndpr7gnm347d6pn37uywgudzq90w7fsuk52kd5u
   ```
 
-* Send currency from one wallet to another (e.g., 30 atomic units of currency)
+* Send currency from the first wallet to the second wallet created in the previous step (e.g., 30 atomic units of currency)
   ```terminal
   # ./build/src/uhs/client/client-cli 2pc-compose.cfg mempool0.dat wallet0.dat send 30 usd1qrw038lx5n4wxx3yvuwdndpr7gnm347d6pn37uywgudzq90w7fsuk52kd5u
   tx_id:
@@ -150,7 +210,7 @@ In each of the below commands, you should pass `atomizer-compose.cfg` instead of
   Balance: $0.20, UTXOs: 4, pending TXs: 0
   ```
 
-* Import coins to the receiving wallet
+* Import coins to the receiving wallet using the string after `importinput` from the currency transfer step above
   ```terminal
   # ./build/src/uhs/client/client-cli 2pc-compose.cfg mempool1.dat wallet1.dat importinput cc1f7dc708be5b07e23e125cf0674002ff8546a9342928114bc97031d8b96e750000000000000000d0e4f689b550f623e9370edae235de50417860be0f2f8e924eca9f402fcefeaa1e00000000000000
   # ./build/src/uhs/client/client-cli 2pc-compose.cfg mempool1.dat wallet1.dat sync
@@ -162,11 +222,25 @@ In each of the below commands, you should pass `atomizer-compose.cfg` instead of
 
 Running Unit & Integration Tests
 
-1. Build the container
+1. Build all docker images
    ```terminal
-   # docker build . -t opencbdc-tx
+   $ ./scripts/build-docker.sh
    ```
-2. Run Unit & Integration Tests
+1. Run Unit & Integration Tests
    ```terminal
-   # docker run -ti opencbdc-tx ./scripts/test.sh
+   $ docker run -ti opencbdc-tx-builder ./scripts/test.sh
    ```
+
+### E2E Testing with Kubernetes
+
+#### Requirements
+- Go (go test library used to run tests)
+- Minikube
+- Helm
+- Kubectl
+
+#### Running tests
+
+1. `./scripts/build-docker.sh`
+1. `./scripts/test-e2e-minikube.sh`
+1. Review results and logs at `testruns/<testrun-uuid>/`

@@ -54,6 +54,9 @@ class atomizer_end_to_end_test : public ::testing::Test {
         ASSERT_TRUE(m_ctl_shard->init());
         ASSERT_TRUE(m_ctl_sentinel->init());
 
+        std::this_thread::sleep_for(m_block_wait_interval);
+        ASSERT_TRUE(m_ctl_watchtower->get_block_height() > 0);
+
         reload_sender();
         reload_receiver();
 
@@ -62,6 +65,8 @@ class atomizer_end_to_end_test : public ::testing::Test {
         m_sender->mint(10, 10);
         std::this_thread::sleep_for(m_block_wait_interval);
         m_sender->sync();
+
+        ASSERT_EQ(m_sender->balance(), 10UL * 10UL);
 
         reload_sender();
 
@@ -137,30 +142,30 @@ TEST_F(atomizer_end_to_end_test, complete_transaction) {
     ASSERT_TRUE(res.has_value());
     ASSERT_FALSE(res->m_tx_error.has_value());
     ASSERT_EQ(res->m_tx_status, cbdc::sentinel::tx_status::pending);
-    ASSERT_EQ(tx->m_outputs[0].m_value, 33);
-    ASSERT_EQ(m_sender->balance(), 60);
+    ASSERT_EQ(tx->m_outputs[0].m_value, 33UL);
+    ASSERT_EQ(m_sender->balance(), 60UL);
     auto in = m_sender->export_send_inputs(tx.value(), addr);
-    ASSERT_EQ(in.size(), 1);
+    ASSERT_EQ(in.size(), 1UL);
 
     std::this_thread::sleep_for(m_block_wait_interval);
     reload_sender();
-    ASSERT_EQ(m_sender->balance(), 60);
-    ASSERT_EQ(m_sender->pending_tx_count(), 1);
-    ASSERT_EQ(m_sender->pending_input_count(), 0);
+    ASSERT_EQ(m_sender->balance(), 60UL);
+    ASSERT_EQ(m_sender->pending_tx_count(), 1UL);
+    ASSERT_EQ(m_sender->pending_input_count(), 0UL);
     m_sender->sync();
-    ASSERT_EQ(m_sender->balance(), 67);
-    ASSERT_EQ(m_sender->pending_tx_count(), 0);
+    ASSERT_EQ(m_sender->balance(), 67UL);
+    ASSERT_EQ(m_sender->pending_tx_count(), 0UL);
 
-    ASSERT_EQ(m_receiver->pending_input_count(), 0);
+    ASSERT_EQ(m_receiver->pending_input_count(), 0UL);
     m_receiver->import_send_input(in[0]);
     reload_receiver();
-    ASSERT_EQ(m_receiver->balance(), 0);
-    ASSERT_EQ(m_sender->pending_tx_count(), 0);
-    ASSERT_EQ(m_receiver->pending_input_count(), 1);
+    ASSERT_EQ(m_receiver->balance(), 0UL);
+    ASSERT_EQ(m_sender->pending_tx_count(), 0UL);
+    ASSERT_EQ(m_receiver->pending_input_count(), 1UL);
     m_receiver->sync();
-    ASSERT_EQ(m_receiver->balance(), 33);
-    ASSERT_EQ(m_sender->pending_tx_count(), 0);
-    ASSERT_EQ(m_receiver->pending_input_count(), 0);
+    ASSERT_EQ(m_receiver->balance(), 33UL);
+    ASSERT_EQ(m_sender->pending_tx_count(), 0UL);
+    ASSERT_EQ(m_receiver->pending_input_count(), 0UL);
 }
 
 TEST_F(atomizer_end_to_end_test, double_spend) {
@@ -169,24 +174,30 @@ TEST_F(atomizer_end_to_end_test, double_spend) {
     auto wc = cbdc::watchtower::blocking_client(
         m_opts.m_watchtower_client_endpoints[0]);
     ASSERT_TRUE(wc.init());
-    auto bbh = wc.request_best_block_height()->height() + 1;
+    ASSERT_EQ(m_sender->balance(), 100UL); // Initial state
     auto [tx, res] = m_sender->send(33, addr);
     ASSERT_TRUE(tx.has_value());
     ASSERT_TRUE(res.has_value());
+    ASSERT_EQ(tx->m_inputs.size(), 4UL); // 4 inputs of 10 each
+    ASSERT_EQ(tx->m_witness.size(), 4UL);
+    // Confirm 2 outputs: 1) 33 to receiver, 2) 7 back to sender
+    ASSERT_EQ(tx->m_outputs.size(), 2UL);
     ASSERT_FALSE(res->m_tx_error.has_value());
     ASSERT_EQ(res->m_tx_status, cbdc::sentinel::tx_status::pending);
-    ASSERT_EQ(tx->m_outputs[0].m_value, 33);
-    ASSERT_EQ(m_sender->balance(), 60);
+    ASSERT_EQ(tx->m_outputs[0].m_value, 33UL);
+    ASSERT_EQ(tx->m_outputs[1].m_value, 7UL); // amount back to sender
+    ASSERT_EQ(m_sender->balance(), 60UL);
 
     std::this_thread::sleep_for(m_block_wait_interval);
     reload_sender();
-    ASSERT_EQ(m_sender->balance(), 60);
-    ASSERT_EQ(m_sender->pending_tx_count(), 1);
-    ASSERT_EQ(m_sender->pending_input_count(), 0);
+    ASSERT_EQ(m_sender->balance(), 60UL);
+    ASSERT_EQ(m_sender->pending_tx_count(), 1UL);
+    ASSERT_EQ(m_sender->pending_input_count(), 0UL);
     m_sender->sync();
-    ASSERT_EQ(m_sender->balance(), 67);
-    ASSERT_EQ(m_sender->pending_tx_count(), 0);
+    ASSERT_EQ(m_sender->balance(), 67UL);
+    ASSERT_EQ(m_sender->pending_tx_count(), 0UL);
 
+    // Re-send the transaction directly to sentinel (ie double-spend)
     auto sc
         = cbdc::sentinel::rpc::client(m_opts.m_sentinel_endpoints, m_logger);
     ASSERT_TRUE(sc.init());
@@ -197,8 +208,8 @@ TEST_F(atomizer_end_to_end_test, double_spend) {
 
     std::this_thread::sleep_for(m_block_wait_interval);
 
-    auto ctx = cbdc::transaction::compact_tx(tx.value());
-    auto wc_res = wc.request_status_update(
+    const auto ctx = cbdc::transaction::compact_tx(tx.value());
+    const auto wc_res = wc.request_status_update(
         cbdc::watchtower::status_update_request{{{ctx.m_id,
                                                   {
                                                       ctx.m_inputs[0],
@@ -207,25 +218,17 @@ TEST_F(atomizer_end_to_end_test, double_spend) {
                                                       ctx.m_uhs_outputs[1],
                                                   }}}});
 
-    auto want = cbdc::watchtower::status_request_check_success{
-        {{ctx.m_id,
-          {cbdc::watchtower::status_update_state{
-               cbdc::watchtower::search_status::spent,
-               bbh,
-               ctx.m_inputs[0]},
-           cbdc::watchtower::status_update_state{
-               cbdc::watchtower::search_status::spent,
-               bbh,
-               ctx.m_inputs[1]},
-           cbdc::watchtower::status_update_state{
-               cbdc::watchtower::search_status::unspent,
-               bbh,
-               ctx.m_uhs_outputs[0]},
-           cbdc::watchtower::status_update_state{
-               cbdc::watchtower::search_status::unspent,
-               bbh,
-               ctx.m_uhs_outputs[1]}}}}};
-    ASSERT_EQ(*wc_res, want);
+    // Final check - ensure attempted double spends are marked as spent:
+    const auto res_uhs_states = wc_res->states().at(ctx.m_id);
+    ASSERT_EQ(res_uhs_states.size(), 4UL);
+    ASSERT_EQ(res_uhs_states[0].status(),
+              cbdc::watchtower::search_status::spent);
+    ASSERT_EQ(res_uhs_states[1].status(),
+              cbdc::watchtower::search_status::spent);
+    ASSERT_EQ(res_uhs_states[2].status(),
+              cbdc::watchtower::search_status::unspent);
+    ASSERT_EQ(res_uhs_states[3].status(),
+              cbdc::watchtower::search_status::unspent);
 }
 
 TEST_F(atomizer_end_to_end_test, invalid_transaction) {
@@ -255,9 +258,8 @@ TEST_F(atomizer_end_to_end_test, invalid_transaction) {
 
     std::this_thread::sleep_for(m_block_wait_interval);
 
-    auto bbh = wc.request_best_block_height()->height();
-    auto ctx = cbdc::transaction::compact_tx(tx.value());
-    auto wc_res = wc.request_status_update(
+    const auto ctx = cbdc::transaction::compact_tx(tx.value());
+    const auto wc_res = wc.request_status_update(
         cbdc::watchtower::status_update_request{{{ctx.m_id,
                                                   {
                                                       ctx.m_inputs[0],
@@ -266,24 +268,14 @@ TEST_F(atomizer_end_to_end_test, invalid_transaction) {
                                                       ctx.m_uhs_outputs[1],
                                                   }}}});
 
-    auto want = cbdc::watchtower::status_request_check_success{
-        {{ctx.m_id,
-          {cbdc::watchtower::status_update_state{
-               cbdc::watchtower::search_status::no_history,
-               bbh,
-               ctx.m_inputs[0]},
-           cbdc::watchtower::status_update_state{
-               cbdc::watchtower::search_status::no_history,
-               bbh,
-               ctx.m_inputs[1]},
-           cbdc::watchtower::status_update_state{
-               cbdc::watchtower::search_status::no_history,
-               bbh,
-               ctx.m_uhs_outputs[0]},
-           cbdc::watchtower::status_update_state{
-               cbdc::watchtower::search_status::no_history,
-               bbh,
-               ctx.m_uhs_outputs[1]}}}}};
-
-    ASSERT_EQ(*wc_res, want);
+    const auto res_uhs_states = wc_res->states().at(ctx.m_id);
+    ASSERT_EQ(res_uhs_states.size(), 4UL);
+    ASSERT_EQ(res_uhs_states[0].status(),
+              cbdc::watchtower::search_status::no_history);
+    ASSERT_EQ(res_uhs_states[1].status(),
+              cbdc::watchtower::search_status::no_history);
+    ASSERT_EQ(res_uhs_states[2].status(),
+              cbdc::watchtower::search_status::no_history);
+    ASSERT_EQ(res_uhs_states[3].status(),
+              cbdc::watchtower::search_status::no_history);
 }

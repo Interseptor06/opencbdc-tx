@@ -26,13 +26,11 @@ namespace cbdc {
     auto atomizer_client::init_derived() -> bool {
         m_atomizer_network.cluster_connect(m_opts.m_atomizer_endpoints);
         if(!m_atomizer_network.connected_to_one()) {
-            m_logger->error("Failed to connect to any atomizers");
-            return false;
+            m_logger->warn("Failed to connect to any atomizers");
         }
 
         if(!m_wc.init()) {
-            m_logger->error("Failed to initialize watchtower client");
-            return false;
+            m_logger->warn("Failed to initialize watchtower client");
         }
 
         return true;
@@ -90,7 +88,13 @@ namespace cbdc {
     auto atomizer_client::send_mint_tx(const transaction::full_tx& mint_tx)
         -> bool {
         atomizer::tx_notify_request msg;
-        msg.m_tx = transaction::compact_tx(mint_tx);
+        auto ctx = transaction::compact_tx(mint_tx);
+        for(size_t i = 0; i < m_opts.m_attestation_threshold; i++) {
+            auto att
+                = ctx.sign(m_secp.get(), m_opts.m_sentinel_private_keys[i]);
+            ctx.m_attestations.insert(att);
+        }
+        msg.m_tx = std::move(ctx);
         msg.m_block_height = m_wc.request_best_block_height()->height();
         return m_atomizer_network.send_to_one(atomizer::request{msg});
     }

@@ -1,58 +1,77 @@
-FROM ubuntu:20.04
+# Define image base arg
+ARG IMAGE_VERSION="ubuntu:20.04"
+
+# Define base image repo name
+ARG BASE_IMAGE="ghcr.io/mit-dci/opencbdc-tx-base:latest"
+
+# Create Base Image
+FROM $IMAGE_VERSION AS base
 
 # set non-interactive shell
 ENV DEBIAN_FRONTEND noninteractive
+ENV CMAKE_BUILD_TYPE Release
+ENV BUILD_RELEASE 1
 
-# install base packages
-RUN apt update && \
-    apt install -y \
-      build-essential \
-      wget \
-      cmake \
-      libgtest-dev \
-      libgmock-dev \
-      net-tools \
-      lcov \
-      git
+RUN mkdir -p /opt/tx-processor/scripts
 
-# Args
-ARG CMAKE_BUILD_TYPE="Release"
-ARG LEVELDB_VERSION="1.22"
-ARG NURAFT_VERSION="1.3.0"
-
-# Install LevelDB
-RUN wget https://github.com/google/leveldb/archive/${LEVELDB_VERSION}.tar.gz && \
-    tar xzvf ${LEVELDB_VERSION}.tar.gz && \
-    rm -f ${LEVELDB_VERSION}.tar.gz && \
-    cd leveldb-${LEVELDB_VERSION} && \
-    cmake -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} -DLEVELDB_BUILD_TESTS=0 -DLEVELDB_BUILD_BENCHMARKS=0 -DBUILD_SHARED_LIBS=0 . && \
-    make -j$(nproc) && \
-    make install
-
-# Install NuRaft
-RUN wget https://github.com/eBay/NuRaft/archive/v${NURAFT_VERSION}.tar.gz && \
-    tar xzvf v${NURAFT_VERSION}.tar.gz && \
-    rm v${NURAFT_VERSION}.tar.gz && \
-    cd "NuRaft-${NURAFT_VERSION}" && \
-    ./prepare.sh && \
-    mkdir build && \
-    cd build && \
-    cmake -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} -DDISABLE_SSL=1 .. && \
-    make -j$(nproc) static_lib && \
-    cp libnuraft.a /usr/local/lib && \
-    cp -r ../include/libnuraft /usr/local/include
+COPY scripts/configure.sh /opt/tx-processor/scripts/configure.sh
 
 # Set working directory
 WORKDIR /opt/tx-processor
 
+RUN scripts/configure.sh
+
+# Create Build Image
+FROM $BASE_IMAGE AS builder
+
 # Copy source
 COPY . .
-
-# Update submodules and run configure.sh
-RUN git submodule init && git submodule update
 
 # Build binaries
 RUN mkdir build && \
     cd build && \
     cmake -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} .. && \
     make -j$(nproc)
+
+# Create 2PC Deployment Image
+FROM $IMAGE_VERSION AS twophase
+
+# Set working directory
+WORKDIR /opt/tx-processor
+
+# Only copy essential binaries
+COPY --from=builder /opt/tx-processor/build/src/uhs/twophase/sentinel_2pc/sentineld-2pc ./build/src/uhs/twophase/sentinel_2pc/sentineld-2pc
+COPY --from=builder /opt/tx-processor/build/src/uhs/twophase/coordinator/coordinatord ./build/src/uhs/twophase/coordinator/coordinatord
+COPY --from=builder /opt/tx-processor/build/src/uhs/twophase/locking_shard/locking-shardd ./build/src/uhs/twophase/locking_shard/locking-shardd
+COPY --from=builder /opt/tx-processor/build/tools/bench/twophase-gen ./build/tools/bench/twophase-gen
+
+# Copy minimal test transactions script
+COPY --from=builder /opt/tx-processor/scripts/test-transaction.sh ./scripts/test-transaction.sh
+
+# Copy Client CLI
+COPY --from=builder /opt/tx-processor/build/src/uhs/client/client-cli ./build/src/uhs/client/client-cli
+
+# Copy 2PC config
+COPY --from=builder /opt/tx-processor/2pc-compose.cfg ./2pc-compose.cfg
+
+# Create Atomizer Deployment Image
+FROM $IMAGE_VERSION AS atomizer
+
+# Set working directory
+WORKDIR /opt/tx-processor
+
+# Only copy essential binaries
+COPY --from=builder /opt/tx-processor/build/src/uhs/atomizer/atomizer/atomizer-raftd ./build/src/uhs/atomizer/atomizer/atomizer-raftd
+COPY --from=builder /opt/tx-processor/build/src/uhs/atomizer/watchtower/watchtowerd ./build/src/uhs/atomizer/watchtower/watchtowerd
+COPY --from=builder /opt/tx-processor/build/src/uhs/atomizer/archiver/archiverd ./build/src/uhs/atomizer/archiver/archiverd
+COPY --from=builder /opt/tx-processor/build/src/uhs/atomizer/shard/shardd ./build/src/uhs/atomizer/shard/shardd
+COPY --from=builder /opt/tx-processor/build/src/uhs/atomizer/sentinel/sentineld ./build/src/uhs/atomizer/sentinel/sentineld
+
+# Copy minimal test transactions script
+COPY --from=builder /opt/tx-processor/scripts/test-transaction.sh ./scripts/test-transaction.sh
+
+# Copy Client CLI
+COPY --from=builder /opt/tx-processor/build/src/uhs/client/client-cli ./build/src/uhs/client/client-cli
+
+# Copy atomizer config
+COPY --from=builder /opt/tx-processor/atomizer-compose.cfg ./atomizer-compose.cfg

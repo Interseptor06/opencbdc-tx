@@ -8,6 +8,8 @@ add_executable(run_unit_tests archiver_test.cpp
                               config_test.cpp
                               coordinator/messages_test.cpp
                               locking_shard/format_test.cpp
+                              locking_shard/controller_test.cpp
+                              coordinator/controller_test.cpp
                               network_test.cpp
                               message_test.cpp
                               raft_test.cpp
@@ -29,8 +31,8 @@ add_executable(run_unit_tests archiver_test.cpp
 
 target_compile_options(run_unit_tests PRIVATE -ftest-coverage -fprofile-arcs)
 target_link_options(run_unit_tests PRIVATE --coverage)
-target_link_libraries(run_unit_tests ${GTEST_BOTH_LIBRARIES}
-                                     ${GMOCK_BOTH_LIBRARIES}
+target_link_libraries(run_unit_tests ${GTEST_LIBRARY}
+                                     ${GTEST_MAIN_LIBRARY}
                                      util
                                      client
                                      atomizer

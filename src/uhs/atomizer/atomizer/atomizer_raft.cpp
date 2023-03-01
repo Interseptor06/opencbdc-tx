@@ -6,28 +6,31 @@
 #include "atomizer_raft.hpp"
 
 #include "format.hpp"
+#include "uhs/transaction/validation.hpp"
 #include "util/raft/serialization.hpp"
 #include "util/raft/util.hpp"
 #include "util/serialization/util.hpp"
 
 namespace cbdc::atomizer {
-    atomizer_raft::atomizer_raft(uint32_t atomizer_id,
-                                 const network::endpoint_t& raft_endpoint,
-                                 size_t stxo_cache_depth,
-                                 std::shared_ptr<logging::log> logger,
-                                 nuraft::cb_func::func_type raft_callback,
-                                 bool wait_for_followers)
+    atomizer_raft::atomizer_raft(
+        uint32_t atomizer_id,
+        std::vector<network::endpoint_t> raft_endpoints,
+        size_t stxo_cache_depth,
+        std::shared_ptr<logging::log> logger,
+        config::options opts,
+        nuraft::cb_func::func_type raft_callback)
         : node(static_cast<int>(atomizer_id),
-               raft_endpoint,
+               std::move(raft_endpoints),
                m_node_type,
                false,
                nuraft::cs_new<state_machine>(
                    stxo_cache_depth,
                    "atomizer_snps_" + std::to_string(atomizer_id)),
                0,
-               std::move(logger),
-               std::move(raft_callback),
-               wait_for_followers) {}
+               logger,
+               std::move(raft_callback)),
+          m_log(std::move(logger)),
+          m_opts(std::move(opts)) {}
 
     auto atomizer_raft::get_sm() -> state_machine* {
         // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
@@ -50,46 +53,69 @@ namespace cbdc::atomizer {
     }
 
     void atomizer_raft::tx_notify(tx_notify_request&& notif) {
-        auto it = m_txs.find(notif.m_tx);
-        if(it != m_txs.end()) {
-            for(auto n : notif.m_attestations) {
-                auto p = std::make_pair(n, notif.m_block_height);
-                auto n_it = it->second.find(p);
-                if((n_it != it->second.end()
-                    && n_it->second < notif.m_block_height)
-                   || n_it == it->second.end()) {
-                    it->second.insert(std::move(p));
-                }
-            }
-        } else {
-            auto attestations = attestation_set();
-            attestations.reserve(notif.m_attestations.size());
-            for(auto n : notif.m_attestations) {
-                attestations.insert(std::make_pair(n, notif.m_block_height));
-            }
-            it = m_txs
-                     .insert(std::make_pair(std::move(notif.m_tx),
-                                            std::move(attestations)))
-                     .first;
+        if(!transaction::validation::check_attestations(
+               notif.m_tx,
+               m_opts.m_sentinel_public_keys,
+               m_opts.m_attestation_threshold)) {
+            m_log->warn("Received invalid compact transaction",
+                        to_string(notif.m_tx.m_id));
+            return;
         }
 
-        // TODO: handle notifications that never spill over due to lack of
-        //       attestations
-        if(it->second.size() == it->first.m_inputs.size()) {
-            auto agg = aggregate_tx_notification();
-            auto tx = m_txs.extract(it);
-            agg.m_tx = std::move(tx.key());
-            uint64_t oldest{0};
-            for(const auto& att : tx.mapped()) {
-                if(oldest == 0 || att.second < oldest) {
-                    oldest = att.second;
+        auto maybe_tx = [&]() -> std::optional<decltype(m_txs)::node_type> {
+            std::unique_lock l(m_txs_mut);
+            auto it = m_txs.find(notif.m_tx);
+            if(it != m_txs.end()) {
+                for(auto n : notif.m_attestations) {
+                    auto p = std::make_pair(n, notif.m_block_height);
+                    auto n_it = it->second.find(p);
+                    if((n_it != it->second.end()
+                        && n_it->second < notif.m_block_height)
+                       || n_it == it->second.end()) {
+                        it->second.insert(std::move(p));
+                    }
                 }
+            } else {
+                auto attestations = attestation_set();
+                attestations.reserve(notif.m_attestations.size());
+                for(auto n : notif.m_attestations) {
+                    attestations.insert(
+                        std::make_pair(n, notif.m_block_height));
+                }
+                it = m_txs
+                         .insert(std::make_pair(std::move(notif.m_tx),
+                                                std::move(attestations)))
+                         .first;
             }
-            agg.m_oldest_attestation = oldest;
-            {
-                std::lock_guard<std::mutex> l(m_complete_mut);
-                m_complete_txs.push_back(std::move(agg));
+
+            // TODO: handle notifications that never spill over due to lack of
+            //       attestations
+            if(it->second.size() != it->first.m_inputs.size()) {
+                return std::nullopt;
             }
+
+            auto tx = m_txs.extract(it);
+            return tx;
+        }();
+
+        if(!maybe_tx.has_value()) {
+            return;
+        }
+
+        auto& tx = maybe_tx.value();
+        auto agg = aggregate_tx_notification();
+        agg.m_tx = std::move(tx.key());
+        uint64_t oldest{0};
+        for(const auto& att : tx.mapped()) {
+            if(oldest == 0 || att.second < oldest) {
+                oldest = att.second;
+            }
+        }
+        agg.m_oldest_attestation = oldest;
+
+        {
+            std::lock_guard<std::mutex> l(m_complete_mut);
+            m_complete_txs.push_back(std::move(agg));
         }
     }
 

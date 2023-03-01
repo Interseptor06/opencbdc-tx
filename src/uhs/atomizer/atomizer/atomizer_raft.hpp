@@ -22,19 +22,17 @@ namespace cbdc::atomizer {
       public:
         /// Constructor.
         /// \param atomizer_id ID of the raft node.
-        /// \param raft_endpoint endpoint for raft communications.
+        /// \param raft_endpoints node endpoints for raft communications.
         /// \param stxo_cache_depth number of blocks in the spent output cache.
         /// \param logger log instance.
+        /// \param opts configuration options.
         /// \param raft_callback NuRaft callback for raft events.
-        /// \param wait_for_followers true if the leader raft node should
-        ///                           re-attempt to add all followers to the
-        ///                           cluster until success.
         atomizer_raft(uint32_t atomizer_id,
-                      const network::endpoint_t& raft_endpoint,
+                      std::vector<network::endpoint_t> raft_endpoints,
                       size_t stxo_cache_depth,
                       std::shared_ptr<logging::log> logger,
-                      nuraft::cb_func::func_type raft_callback,
-                      bool wait_for_followers);
+                      config::options opts,
+                      nuraft::cb_func::func_type raft_callback);
 
         /// Serialize and replicate the given request in the atomizer raft
         /// cluster. Return the response asynchronously via the given result
@@ -94,6 +92,10 @@ namespace cbdc::atomizer {
             m_txs;
         std::mutex m_complete_mut;
         std::vector<aggregate_tx_notification> m_complete_txs;
+        std::shared_ptr<logging::log> m_log;
+        config::options m_opts;
+
+        std::mutex m_txs_mut;
     };
 }
 

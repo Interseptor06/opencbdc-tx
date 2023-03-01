@@ -23,13 +23,11 @@ namespace cbdc {
 
     auto twophase_client::init_derived() -> bool {
         if(!m_coordinator_client.init()) {
-            m_logger->error("Failed to initialize coordinator client");
-            return false;
+            m_logger->warn("Failed to initialize coordinator client");
         }
 
         if(!m_shard_status_client.init()) {
-            m_logger->error("Failed to initialize shard status client");
-            return false;
+            m_logger->warn("Failed to initialize shard status client");
         }
 
         return true;
@@ -78,6 +76,11 @@ namespace cbdc {
     auto twophase_client::send_mint_tx(const transaction::full_tx& mint_tx)
         -> bool {
         auto ctx = transaction::compact_tx(mint_tx);
+        for(size_t i = 0; i < m_opts.m_attestation_threshold; i++) {
+            auto att
+                = ctx.sign(m_secp.get(), m_opts.m_sentinel_private_keys[i]);
+            ctx.m_attestations.insert(att);
+        }
         auto done = std::promise<void>();
         auto done_fut = done.get_future();
         auto res = m_coordinator_client.execute_transaction(

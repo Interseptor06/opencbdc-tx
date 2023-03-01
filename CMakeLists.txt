@@ -11,7 +11,6 @@ try_compile(USE_STDFS_LIB ${CMAKE_BINARY_DIR} "${CMAKE_SOURCE_DIR}/cmake-tests/t
 check_cxx_compiler_flag(-Wshadow-all W_SHADOW_ALL)
 check_cxx_compiler_flag(-Wnewline-eof W_NEWLINE_EOF)
 
-
 set(SSE41_CXXFLAGS "-msse4.1")
 set(AVX2_CXXFLAGS  "-mavx -mavx2")
 set(SHANI_CXXFLAGS "-msse4 -msha")
@@ -31,16 +30,17 @@ endif()
 
 find_library(LEVELDB_LIBRARY leveldb REQUIRED)
 find_library(NURAFT_LIBRARY nuraft REQUIRED)
+find_library(GTEST_LIBRARY gtest REQUIRED)
+find_library(GTEST_MAIN_LIBRARY gtest_main REQUIRED)
+find_package(benchmark REQUIRED)
 
-message("Disabling Run Time Type Information (RTTI) features.")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-rtti")
 
-include_directories(3rdparty 3rdparty/secp256k1/include)
+include_directories(3rdparty 3rdparty/secp256k1/include /usr/lib /usr/local/lib /usr/local/include /opt/homebrew/include)
 
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     add_compile_options(-fprofile-arcs -ftest-coverage)
 endif()
-
 
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     add_link_options(--coverage)
@@ -75,5 +75,6 @@ endif()
 
 add_subdirectory(src)
 add_subdirectory(tests)
+add_subdirectory(benchmarks)
 add_subdirectory(tools/bench)
 add_subdirectory(tools/shard-seeder)

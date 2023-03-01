@@ -11,6 +11,14 @@
 #include "uhs/transaction/wallet.hpp"
 
 namespace cbdc {
+    namespace address {
+        static constexpr auto bits_per_byte = 8;
+        static constexpr auto bech32_bits_per_symbol = 5;
+
+        auto decode(const std::string& addr_str)
+            -> std::optional<cbdc::hash_t>;
+    }
+
     /// External client for sending new transactions to the system.
     class client {
       public:
@@ -36,8 +44,8 @@ namespace cbdc {
 
         /// \brief Initializes the client.
         ///
-        /// Attempts to load the data files, and creates new ones if they do
-        /// not exist. Establishes connections to the system components.
+        /// Attempts to load the data files and
+        /// establish connections to the system components.
         /// \return true if initialization succeeded.
         auto init() -> bool;
 
@@ -73,7 +81,7 @@ namespace cbdc {
         ///         generating or transmitting the transaction failed.
         auto send(uint32_t value, const pubkey_t& payee)
             -> std::pair<std::optional<transaction::full_tx>,
-                         std::optional<cbdc::sentinel::response>>;
+                         std::optional<cbdc::sentinel::execute_response>>;
 
         /// \brief Send a specified number of fixed-value outputs from this
         ///        client's wallet to a target address.
@@ -89,7 +97,7 @@ namespace cbdc {
         ///         generating or transmitting the transaction failed.
         auto fan(uint32_t count, uint32_t value, const pubkey_t& payee)
             -> std::pair<std::optional<transaction::full_tx>,
-                         std::optional<cbdc::sentinel::response>>;
+                         std::optional<cbdc::sentinel::execute_response>>;
 
         /// \brief Extracts the transaction data that recipients need from
         ///        senders to confirm pending transfers.
@@ -188,7 +196,7 @@ namespace cbdc {
         /// \param tx the transaction to send.
         /// \return the sentinel's response to the transaction, if any.
         auto send_transaction(const transaction::full_tx& tx)
-            -> std::optional<cbdc::sentinel::response>;
+            -> std::optional<cbdc::sentinel::execute_response>;
 
         /// \brief Abandons a transaction currently awaiting confirmation.
         ///

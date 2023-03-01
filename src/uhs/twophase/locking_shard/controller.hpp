@@ -25,7 +25,7 @@ namespace cbdc::locking_shard {
         /// \param logger log to use for output.
         controller(size_t shard_id,
                    size_t node_id,
-                   const cbdc::config::options& opts,
+                   config::options opts,
                    std::shared_ptr<logging::log> logger);
         ~controller() = default;
 
@@ -38,6 +38,7 @@ namespace cbdc::locking_shard {
         /// Initializes the locking shard by reading the pre-seed file if
         /// applicable, initializing the raft cluster, and starting listeners
         /// on the client and status client endpoints.
+        /// Opens the audit log and starts a periodic supply auditing thread.
         /// \return false if initialization fails.
         auto init() -> bool;
 
@@ -46,7 +47,7 @@ namespace cbdc::locking_shard {
                            nuraft::cb_func::Param* param)
             -> nuraft::cb_func::ReturnCode;
 
-        cbdc::config::options m_opts;
+        config::options m_opts;
         std::shared_ptr<logging::log> m_logger;
         size_t m_shard_id;
         size_t m_node_id;

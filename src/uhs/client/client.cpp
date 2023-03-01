@@ -5,6 +5,8 @@
 
 #include "client.hpp"
 
+#include "bech32/bech32.h"
+#include "bech32/util/strencodings.h"
 #include "crypto/sha256.h"
 #include "uhs/sentinel/format.hpp"
 #include "uhs/transaction/messages.hpp"
@@ -20,6 +22,42 @@
 #include <utility>
 
 namespace cbdc {
+
+    namespace address {
+        auto decode(const std::string& addr_str)
+            -> std::optional<cbdc::hash_t> {
+            // TODO: if/when bech32m is merged into Bitcoin Core, switch to
+            // that.
+            //       see: https://github.com/bitcoin/bitcoin/pull/20861
+            const auto [hrp, enc_data] = bech32::Decode(addr_str);
+            if(hrp != cbdc::config::bech32_hrp) {
+                std::cout << "Invalid address encoding" << std::endl;
+                return std::nullopt;
+            }
+            auto data = std::vector<uint8_t>();
+            ConvertBits<bech32_bits_per_symbol, bits_per_byte, false>(
+                [&](uint8_t c) {
+                    data.push_back(c);
+                },
+                enc_data.begin(),
+                enc_data.end());
+
+            auto pubkey = cbdc::hash_t();
+            if(data[0]
+                   != static_cast<uint8_t>(
+                       cbdc::client::address_type::public_key)
+               || data.size() != pubkey.size() + 1) {
+                std::cout << "Address is not a supported type" << std::endl;
+                return std::nullopt;
+            }
+
+            data.erase(data.begin());
+            std::copy_n(data.begin(), pubkey.size(), pubkey.begin());
+
+            return pubkey;
+        }
+    }
+
     client::client(cbdc::config::options opts,
                    std::shared_ptr<logging::log> logger,
                    std::string wallet_file,
@@ -64,8 +102,6 @@ namespace cbdc {
             m_logger->error("Failed to send mint tx");
         }
 
-        save();
-
         return mint_tx;
     }
 
@@ -96,7 +132,7 @@ namespace cbdc {
 
     auto client::send(uint32_t value, const pubkey_t& payee)
         -> std::pair<std::optional<transaction::full_tx>,
-                     std::optional<cbdc::sentinel::response>> {
+                     std::optional<cbdc::sentinel::execute_response>> {
         static constexpr auto null_return
             = std::make_pair(std::nullopt, std::nullopt);
 
@@ -116,7 +152,7 @@ namespace cbdc {
 
     auto client::fan(uint32_t count, uint32_t value, const pubkey_t& payee)
         -> std::pair<std::optional<transaction::full_tx>,
-                     std::optional<cbdc::sentinel::response>> {
+                     std::optional<cbdc::sentinel::execute_response>> {
         static constexpr auto null_return
             = std::make_pair(std::nullopt, std::nullopt);
 
@@ -137,7 +173,7 @@ namespace cbdc {
     }
 
     auto client::send_transaction(const transaction::full_tx& tx)
-        -> std::optional<cbdc::sentinel::response> {
+        -> std::optional<cbdc::sentinel::execute_response> {
         import_transaction(tx);
 
         auto res = m_sentinel_client.execute_transaction(tx);

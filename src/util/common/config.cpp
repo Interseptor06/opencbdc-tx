@@ -227,6 +227,20 @@ namespace cbdc::config {
         return ss.str();
     }
 
+    auto get_sentinel_private_key_key(size_t sentinel_id) -> std::string {
+        auto ss = std::stringstream();
+        get_sentinel_key_prefix(ss, sentinel_id);
+        ss << private_key_postfix;
+        return ss.str();
+    }
+
+    auto get_sentinel_public_key_key(size_t sentinel_id) -> std::string {
+        auto ss = std::stringstream();
+        get_sentinel_key_prefix(ss, sentinel_id);
+        ss << public_key_postfix;
+        return ss.str();
+    }
+
     auto read_shard_endpoints(options& opts, const parser& cfg)
         -> std::optional<std::string> {
         const auto shard_count = cfg.get_ulong(shard_count_key).value_or(0);
@@ -394,6 +408,10 @@ namespace cbdc::config {
 
     auto read_sentinel_options(options& opts, const parser& cfg)
         -> std::optional<std::string> {
+        opts.m_attestation_threshold
+            = cfg.get_ulong(attestation_threshold_key)
+                  .value_or(opts.m_attestation_threshold);
+
         const auto sentinel_count
             = cfg.get_ulong(sentinel_count_key).value_or(0);
         for(size_t i{0}; i < sentinel_count; i++) {
@@ -410,6 +428,30 @@ namespace cbdc::config {
                 = cfg.get_loglevel(sentinel_loglevel_key)
                       .value_or(defaults::log_level);
             opts.m_sentinel_loglevels.push_back(sentinel_loglevel);
+
+            const auto sentinel_private_key_key
+                = get_sentinel_private_key_key(i);
+            const auto sentinel_private_key
+                = cfg.get_string(sentinel_private_key_key);
+            if(sentinel_private_key.has_value()) {
+                auto key = hash_from_hex(sentinel_private_key.value());
+                opts.m_sentinel_private_keys[i] = key;
+            }
+
+            const auto sentinel_public_key_key
+                = get_sentinel_public_key_key(i);
+            const auto sentinel_public_key
+                = cfg.get_string(sentinel_public_key_key);
+            if(!sentinel_public_key.has_value()) {
+                if(opts.m_attestation_threshold == 0) {
+                    continue;
+                }
+                return "No public key specified for sentinel "
+                     + std::to_string(i) + " (" + sentinel_public_key_key
+                     + ")";
+            }
+            auto key = hash_from_hex(sentinel_public_key.value());
+            opts.m_sentinel_public_keys.insert(key);
         }
         return std::nullopt;
     }
@@ -436,7 +478,11 @@ namespace cbdc::config {
 
             const auto endpoint_key = get_atomizer_raft_endpoint_key(i);
             const auto endpoint_str = cfg.get_endpoint(endpoint_key);
-            opts.m_atomizer_raft_endpoints.push_back(endpoint_str);
+            if(!endpoint_str) {
+                return "No raft endpoint specified for atomizer "
+                     + std::to_string(i) + " (" + endpoint_key + ")";
+            }
+            opts.m_atomizer_raft_endpoints.push_back(endpoint_str.value());
         }
 
         opts.m_target_block_interval
@@ -545,10 +591,6 @@ namespace cbdc::config {
 
         opts.m_batch_size
             = cfg.get_ulong(batch_size_key).value_or(opts.m_batch_size);
-        auto wait_for_followers = cfg.get_ulong(wait_for_followers_key);
-        if(wait_for_followers.has_value()) {
-            opts.m_wait_for_followers = wait_for_followers.value() != 0;
-        }
     }
 
     void read_loadgen_options(options& opts, const parser& cfg) {
@@ -643,6 +685,11 @@ namespace cbdc::config {
                 return "Two-phase mode requires at least one configured "
                        "sentinel";
             }
+            if(opts.m_sentinel_endpoints.size()
+               < opts.m_attestation_threshold) {
+                return "The number of required attestations is larger \n"
+                       "than the number of sentinels that can provide them.";
+            }
             if(opts.m_locking_shard_endpoints.empty()) {
                 return "Two-phase mode requires at least one configured shard";
             }
@@ -676,6 +723,11 @@ namespace cbdc::config {
             if(opts.m_seed_value == 0) {
                 return "Seed range defined but value is zero";
             }
+        }
+
+        if(opts.m_sentinel_public_keys.size() < opts.m_attestation_threshold) {
+            return "Not enough sentinel public keys to reach the attestation "
+                   "threshold";
         }
 
         return std::nullopt;

@@ -10,12 +10,14 @@
 #include "socket_selector.hpp"
 #include "tcp_listener.hpp"
 #include "tcp_socket.hpp"
+#include "util/common/config.hpp"
 
 #include <atomic>
 #include <cassert>
 #include <condition_variable>
 #include <mutex>
 #include <queue>
+#include <random>
 #include <shared_mutex>
 #include <sys/socket.h>
 #include <thread>
@@ -32,7 +34,7 @@ namespace cbdc::network {
         /// Packet data.
         std::shared_ptr<buffer> m_pkt;
         /// Peer ID that sent packet.
-        peer_id_t m_peer_id;
+        peer_id_t m_peer_id{};
     };
 
     /// \brief Function type for packet handler callbacks.
@@ -228,6 +230,9 @@ namespace cbdc::network {
         bool m_async_recv_data{false};
 
         socket_selector m_listen_selector;
+
+        std::random_device m_r{cbdc::config::random_source};
+        std::default_random_engine m_rnd{m_r()};
     };
 }
 

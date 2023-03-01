@@ -20,24 +20,22 @@ namespace cbdc::atomizer {
         : m_atomizer_id(atomizer_id),
           m_opts(opts),
           m_logger(std::move(log)),
-          m_raft_node(
-              static_cast<uint32_t>(atomizer_id),
-              opts.m_atomizer_raft_endpoints[atomizer_id].value(),
-              m_opts.m_stxo_cache_depth,
-              m_logger,
-              [&](auto&& type, auto&& param) {
-                  return raft_callback(std::forward<decltype(type)>(type),
-                                       std::forward<decltype(param)>(param));
-              },
-              m_opts.m_wait_for_followers) {}
+          m_raft_node(static_cast<uint32_t>(atomizer_id),
+                      opts.m_atomizer_raft_endpoints,
+                      m_opts.m_stxo_cache_depth,
+                      m_logger,
+                      m_opts,
+                      [&](auto&& type, auto&& param) {
+                          return raft_callback(
+                              std::forward<decltype(type)>(type),
+                              std::forward<decltype(param)>(param));
+                      }) {}
 
     controller::~controller() {
         m_raft_node.stop();
         m_atomizer_network.close();
 
         m_running = false;
-
-        m_pending_txnotify_cv.notify_one();
 
         if(m_tx_notify_thread.joinable()) {
             m_tx_notify_thread.join();
@@ -50,13 +48,19 @@ namespace cbdc::atomizer {
         if(m_main_thread.joinable()) {
             m_main_thread.join();
         }
+
+        m_notification_queue.clear();
+        for(auto& t : m_notification_threads) {
+            if(t.joinable()) {
+                t.join();
+            }
+        }
     }
 
     auto controller::init() -> bool {
         if(!m_watchtower_network.cluster_connect(
                m_opts.m_watchtower_internal_endpoints)) {
-            m_logger->error("Failed to connect to watchtowers.");
-            return false;
+            m_logger->warn("Failed to connect to watchtowers.");
         }
 
         auto raft_params = nuraft::raft_params();
@@ -75,23 +79,22 @@ namespace cbdc::atomizer {
             return false;
         }
 
-        auto raft_endpoints = std::vector<network::endpoint_t>();
-        for(const auto& s : m_opts.m_atomizer_raft_endpoints) {
-            raft_endpoints.push_back(*s);
-        }
-        if(!m_raft_node.build_cluster(raft_endpoints)) {
-            return false;
-        }
-
-        if(m_opts.m_batch_size > 1) {
-            m_tx_notify_thread = std::thread{[&] {
-                tx_notify_handler();
-            }};
-        }
+        m_tx_notify_thread = std::thread{[&] {
+            tx_notify_handler();
+        }};
 
         m_main_thread = std::thread{[&] {
             main_handler();
         }};
+
+        auto n_threads = std::thread::hardware_concurrency();
+        for(size_t i = 0; i < n_threads; i++) {
+            m_notification_threads.emplace_back([&]() {
+                notification_consumer();
+            });
+        }
+
+        m_logger->info("Atomizer started...");
 
         return true;
     }
@@ -111,7 +114,11 @@ namespace cbdc::atomizer {
         std::visit(
             overloaded{
                 [&](tx_notify_request& notif) {
-                    m_raft_node.tx_notify(std::move(notif));
+                    m_logger->trace("Received transaction notification",
+                                    to_string(notif.m_tx.m_id),
+                                    "with height",
+                                    notif.m_block_height);
+                    m_notification_queue.push(notif);
                 },
                 [&](const prune_request& p) {
                     m_raft_node.make_request(p, nullptr);
@@ -179,7 +186,7 @@ namespace cbdc::atomizer {
                               std::forward<decltype(r)>(r),
                               std::forward<decltype(err)>(err));
                       });
-                if(!res) {
+                if(!res && m_running) {
                     m_logger->error("Failed to make block at time",
                                     last_time.time_since_epoch().count());
                 }
@@ -223,8 +230,7 @@ namespace cbdc::atomizer {
     void controller::err_return_handler(raft::result_type& r,
                                         nuraft::ptr<std::exception>& err) {
         if(err) {
-            std::cout << "Exception handling log entry: " << err->what()
-                      << std::endl;
+            m_logger->warn("Exception handling log entry:", err->what());
             return;
         }
 
@@ -248,6 +254,7 @@ namespace cbdc::atomizer {
             if(m_atomizer_server.joinable()) {
                 m_atomizer_server.join();
             }
+            m_logger->debug("Became follower, stopped listening");
         } else if(type == nuraft::cb_func::Type::BecomeLeader) {
             // We became the leader. Ensure the previous handler thread is
             // stopped and network shut down.
@@ -269,7 +276,19 @@ namespace cbdc::atomizer {
                 m_logger->fatal("Failed to establish atomizer server.");
             }
             m_atomizer_server = std::move(as.value());
+            m_logger->debug("Became leader, started listening");
         }
         return nuraft::cb_func::ReturnCode::Ok;
+    }
+
+    void controller::notification_consumer() {
+        while(m_running) {
+            auto notif = tx_notify_request();
+            auto popped = m_notification_queue.pop(notif);
+            if(!popped) {
+                break;
+            }
+            m_raft_node.tx_notify(std::move(notif));
+        }
     }
 }

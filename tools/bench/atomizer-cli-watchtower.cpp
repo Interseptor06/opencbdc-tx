@@ -82,8 +82,7 @@ auto main(int argc, char** argv) -> int {
 
     atomizer_network.cluster_connect(cfg.m_atomizer_endpoints, false);
     if(!atomizer_network.connected_to_one()) {
-        log->error("Failed to connect to any atomizers");
-        return -1;
+        log->warn("Failed to connect to any atomizers");
     }
 
     static std::atomic_bool atomizer_network_running = true;
@@ -96,14 +95,12 @@ auto main(int argc, char** argv) -> int {
     auto sentinel_client = std::unique_ptr<cbdc::sentinel::rpc::client>();
 
     if(sign_txs) {
-        // TODO: sentinel load balancing
-        const auto our_sentinel = cli_id % cfg.m_sentinel_endpoints.size();
-        const auto sentinel_ep = cfg.m_sentinel_endpoints[our_sentinel];
+        // TODO: load balancing strategies other than round-robin, backpressure
         sentinel_client = std::make_unique<cbdc::sentinel::rpc::client>(
-            std::vector<cbdc::network::endpoint_t>({sentinel_ep}),
+            std::vector<cbdc::network::endpoint_t>(cfg.m_sentinel_endpoints),
             log);
         if(!sentinel_client->init()) {
-            log->error("Error connecting to sentinel");
+            log->error("Error connecting to sentinels");
             return -1;
         }
     }
@@ -114,8 +111,7 @@ auto main(int argc, char** argv) -> int {
         cfg.m_watchtower_client_endpoints[our_watchtower]);
 
     if(!watchtower_client->init()) {
-        log->error("Failed to connect to watchtower.");
-        return -1;
+        log->warn("Failed to connect to watchtower.");
     }
 
     auto blocking_watchtower_client
@@ -123,8 +119,7 @@ auto main(int argc, char** argv) -> int {
             cfg.m_watchtower_client_endpoints[our_watchtower]);
 
     if(!blocking_watchtower_client->init()) {
-        log->error("Failed to connect to watchtower.");
-        return -1;
+        log->warn("Failed to connect to watchtower.");
     }
 
     cbdc::transaction::wallet wal;
@@ -166,8 +161,8 @@ auto main(int argc, char** argv) -> int {
     static std::atomic_bool running = true;
     uint64_t best_watchtower_height = 0;
 
-    std::ofstream latency_log("latency_samples_" + std::to_string(cli_id)
-                              + ".txt");
+    std::ofstream latency_log("tx_samples_" + std::to_string(cli_id) + ".txt");
+
     assert(latency_log.good());
 
     std::ofstream utxo_set_log("utxo_set_size_" + std::to_string(cli_id)
@@ -221,7 +216,7 @@ auto main(int argc, char** argv) -> int {
                             if(tx_it != txs.end()) {
                                 const auto tx_delay
                                     = now - tx_it->second.first;
-                                latency_log << tx_delay << "\n";
+                                latency_log << now << " " << tx_delay << "\n";
                                 txs.erase(tx_it);
                             }
                             if(cfg.m_invalid_rate > 0.0
@@ -329,8 +324,7 @@ auto main(int argc, char** argv) -> int {
             auto bwc = cbdc::watchtower::blocking_client{
                 cfg.m_watchtower_client_endpoints[our_watchtower]};
             if(!bwc.init()) {
-                log->error("Failed to connect to watchtower.");
-                return -1;
+                log->warn("Failed to connect to watchtower.");
             }
             if(atomizer_network.send_to_one(cbdc::atomizer::request{msg})) {
                 log->info("Sent mint TX to atomizer. ID:",

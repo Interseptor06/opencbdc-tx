@@ -16,7 +16,8 @@ namespace cbdc::locking_shard {
         const std::pair<uint8_t, uint8_t>& output_range,
         std::shared_ptr<logging::log> logger,
         size_t completed_txs_cache_size,
-        const std::string& preseed_file)
+        const std::string& preseed_file,
+        config::options opts)
         : m_output_range(output_range),
           m_logger(std::move(logger)) {
         register_handler_callback([&](rpc::request req) {
@@ -25,11 +26,13 @@ namespace cbdc::locking_shard {
         m_shard = std::make_unique<locking_shard>(output_range,
                                                   m_logger,
                                                   completed_txs_cache_size,
-                                                  preseed_file);
+                                                  preseed_file,
+                                                  std::move(opts));
     }
 
     auto state_machine::commit(uint64_t log_idx, nuraft::buffer& data)
         -> nuraft::ptr<nuraft::buffer> {
+        assert(log_idx == m_last_committed_idx + 1);
         m_last_committed_idx = log_idx;
 
         auto resp = blocking_call(data);
@@ -41,6 +44,13 @@ namespace cbdc::locking_shard {
         }
 
         return resp.value();
+    }
+
+    void state_machine::commit_config(
+        const nuraft::ulong log_idx,
+        nuraft::ptr<nuraft::cluster_config>& /*new_conf*/) {
+        assert(log_idx == m_last_committed_idx + 1);
+        m_last_committed_idx = log_idx;
     }
 
     auto state_machine::apply_snapshot(nuraft::snapshot& /* s */) -> bool {

@@ -18,10 +18,12 @@ class config_validation_test : public ::testing::Test {
         m_atomizer_opts.m_archiver_endpoints.emplace_back();
         m_atomizer_opts.m_watchtower_client_endpoints.emplace_back();
         m_atomizer_opts.m_sentinel_endpoints.emplace_back();
+        m_atomizer_opts.m_sentinel_public_keys.emplace();
         m_atomizer_opts.m_shard_endpoints.emplace_back();
 
         m_twophase_opts.m_twophase_mode = true;
         m_twophase_opts.m_sentinel_endpoints.emplace_back();
+        m_twophase_opts.m_sentinel_public_keys.emplace();
         m_twophase_opts.m_locking_shard_endpoints.emplace_back();
         m_twophase_opts.m_coordinator_endpoints.emplace_back();
 
@@ -95,7 +97,7 @@ TEST_F(config_validation_test, parsing_validation) {
 
     auto window_size = ex.get_ulong("window_size");
     EXPECT_TRUE(window_size.has_value());
-    EXPECT_EQ(window_size.value(), 40000);
+    EXPECT_EQ(window_size.value(), 40000UL);
 
     auto endpoint = ex.get_endpoint("archiver0_endpoint");
     EXPECT_TRUE(endpoint.has_value());

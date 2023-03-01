@@ -403,4 +403,20 @@ namespace cbdc::transaction::validation {
                          err);
         return str;
     }
+
+    auto check_attestations(
+        const transaction::compact_tx& tx,
+        const std::unordered_set<pubkey_t, hashing::null>& pubkeys,
+        size_t threshold) -> bool {
+        if(tx.m_attestations.size() < threshold) {
+            return false;
+        }
+
+        return std::all_of(tx.m_attestations.begin(),
+                           tx.m_attestations.end(),
+                           [&](const auto& att) {
+                               return pubkeys.find(att.first) != pubkeys.end()
+                                   && tx.verify(secp_context.get(), att);
+                           });
+    }
 }
